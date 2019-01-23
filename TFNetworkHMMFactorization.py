@@ -30,7 +30,7 @@ class HMMFactorization(_ConcatInputLayer):
     TODO top_k documentation
     :param kwargs:
     """
-
+    # TODO: TEST IT FOR DECODING!
     super(HMMFactorization, self).__init__(**kwargs)
 
     in_loop = True if len(prev_state.output.shape) == 1 else False

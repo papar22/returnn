@@ -35,17 +35,18 @@ class HMMFactorization(_ConcatInputLayer):
 
     in_loop = True if len(prev_state.output.shape) == 1 else False
 
-    # Get data
+    # # Get data
     if in_loop is False:
-      self.attention_weights = attention_weights.output.get_placeholder_as_time_major()
-      self.base_encoder_transformed = base_encoder_transformed.output.get_placeholder_as_time_major()
-      self.prev_state = prev_state.output.get_placeholder_as_time_major()
-      self.prev_outputs = prev_outputs.output.get_placeholder_as_time_major()
+      self.attention_weights = attention_weights.output.get_placeholder_as_time_major() # [I, J, B, 1]
+      self.base_encoder_transformed = base_encoder_transformed.output.get_placeholder_as_time_major() # [B, J, f]
+      self.prev_state = prev_state.output.get_placeholder_as_time_major() # [I, B, f]
+      self.prev_outputs = prev_outputs.output.get_placeholder_as_time_major() # [I, B, f]
     else:
-      self.attention_weights = attention_weights.output.get_placeholder_as_batch_major()  # [B, J, 1]
-      self.base_encoder_transformed = base_encoder_transformed.output.get_placeholder_as_batch_major()  # [B, J intermediate_size]
-      self.prev_state = prev_state.output.get_placeholder_as_batch_major()  # [B, intermediate_size]
-      self.prev_outputs = prev_outputs.output.get_placeholder_as_batch_major()  # [B, intermediate_size]
+      self.attention_weights = attention_weights.output.get_placeholder_as_batch_major()
+      self.base_encoder_transformed = base_encoder_transformed.output.get_placeholder_as_batch_major()  # [B, J f]
+      self.prev_state = prev_state.output.get_placeholder_as_batch_major()  # [B, f]
+      self.prev_outputs = prev_outputs.output.get_placeholder_as_batch_major()  # [B, f]
+
 
     if debug:
       self.attention_weights = tf.Print(self.attention_weights, [tf.shape(self.attention_weights)],
@@ -84,17 +85,16 @@ class HMMFactorization(_ConcatInputLayer):
 
 
     # Get data
+    attention_weights_shape = tf.shape(self.attention_weights)
     if in_loop is False:
-      attention_weights_shape = tf.shape(self.attention_weights)
+      # attention_weights_shape = tf.shape(self.attention_weights)
       time_i = attention_weights_shape[0]
       batch_size = attention_weights_shape[2]
       time_j = attention_weights_shape[1]
-      intermediate_size = tf.shape(self.base_encoder_transformed)[-1]
     else:
-      attention_weights_shape = tf.shape(self.attention_weights)
+      # attention_weights_shape = tf.shape(self.attention_weights)
       batch_size = attention_weights_shape[1]
       time_j = attention_weights_shape[0]
-      intermediate_size = tf.shape(self.base_encoder_transformed)[-1]
 
     # Use only top_k from self.attention_weights
     if top_k is not None:
@@ -103,10 +103,8 @@ class HMMFactorization(_ConcatInputLayer):
         temp_attention_weights = tf.transpose(self.attention_weights, perm=[0, 2, 3, 1])  # Now [I, B, 1, J]
       else:
         temp_attention_weights = tf.transpose(self.attention_weights, perm=[1, 2, 0])  # Now [B, 1, J]
-      # temp_attention_weights [(I,) B, 1, J]
       temp_k = tf.minimum(top_k, time_j)
-      top_values, top_indices = tf.nn.top_k(temp_attention_weights, k=temp_k)
-      # top_values and indices [(I,) B, 1, top_k]
+      top_values, top_indices = tf.nn.top_k(temp_attention_weights, k=temp_k) # top_values and indices [(I,) B, 1, top_k]
 
       # TODO: Fix self.base_encoder_transformed to only contain top_k
 
@@ -122,68 +120,61 @@ class HMMFactorization(_ConcatInputLayer):
     # Convert base_encoder_transformed, prev_state and prev_outputs to correct shape
     if in_loop is False:
       self.base_encoder_transformed = tf.tile(tf.expand_dims(self.base_encoder_transformed, axis=0),
-                                              [time_i, 1, 1, 1])  # [I, J, B, intermediate_size]
+                                              [time_i, 1, 1, 1])  # [I, J, B, f]
       if top_k is not None:
         self.prev_state = tf.tile(tf.expand_dims(self.prev_state, axis=1),
-                                [1, temp_k, 1, 1])  # [I, J=top_k, B, intermediate_size]
+                                [1, temp_k, 1, 1])  # [I, J=top_k, B, f]
 
         self.prev_outputs = tf.tile(tf.expand_dims(self.prev_outputs, axis=1),
-                                  [1, temp_k, 1, 1])  # [I, J=top_k, B, intermediate_size]
+                                  [1, temp_k, 1, 1])  # [I, J=top_k, B, f]
       else:
         self.prev_state = tf.tile(tf.expand_dims(self.prev_state, axis=1),
-                                    [1, time_j, 1, 1])  # [I, J, B, intermediate_size]
+                                    [1, time_j, 1, 1])  # [I, J, B, f]
         self.prev_outputs = tf.tile(tf.expand_dims(self.prev_outputs, axis=1),
-                                  [1, time_j, 1, 1])  # [I, J, B, intermediate_size]
+                                  [1, time_j, 1, 1])  # [I, J, B, f]
     else:
       self.base_encoder_transformed = tf.transpose(self.base_encoder_transformed,
-                                                   perm=[1, 0, 2])  # [J, B, intermediate_size]
+                                                   perm=[1, 0, 2])  # [J, B, f]
       if top_k is not None:
         self.prev_state = tf.tile(tf.expand_dims(self.prev_state, axis=1),
-                                [temp_k, 1, 1])  # [I, J=top_k, B, intermediate_size]
+                                [temp_k, 1, 1])  # [I, J=top_k, B, f]
 
         self.prev_outputs = tf.tile(tf.expand_dims(self.prev_outputs, axis=1),
-                                  [temp_k, 1, 1])  # [I, J=top_k, B, intermediate_size]
+                                  [temp_k, 1, 1])  # [I, J=top_k, B, f]
       else:
         self.prev_state = tf.tile(tf.expand_dims(self.prev_state, axis=1),
-                                    [time_j, 1, 1])  # [I, J, B, intermediate_size]
+                                    [time_j, 1, 1])  # [I, J, B, f]
         self.prev_outputs = tf.tile(tf.expand_dims(self.prev_outputs, axis=1),
-                                  [time_j, 1, 1])  # [I, J, B, intermediate_size]
+                                  [time_j, 1, 1])  # [I, J, B, f]
 
     # Fix self.base_encoder_transformed if in top_k
     if top_k is not None:
       if in_loop is False:
         self.base_encoder_transformed = tf.transpose(self.base_encoder_transformed,
-                                                     perm=[0, 2, 3, 1])  # Now [I, B, intermediate_size, J]
-        top_indices = tf.tile(top_indices, [1, 1, intermediate_size, 1])  # Now [I, B, intermediate_size, temp_k]
-        ii, jj, kk, _ = tf.meshgrid(
-          tf.range(time_i),
-          tf.range(batch_size),
-          tf.range(intermediate_size),
-          tf.range(temp_k),
-          indexing='ij')
+                                                     perm=[0, 2, 1, 3])  # Now [I, B, J, f]
+        top_indices = tf.squeeze(top_indices, axis=2)
+        ii, jj, _ = tf.meshgrid(tf.range(time_i), tf.range(batch_size), tf.range(temp_k), indexing='ij') # [I B k]
+
         # Stack complete index
-        index = tf.stack([ii, jj, kk, top_indices], axis=-1)
+        index = tf.stack([ii, jj, top_indices], axis=-1) # [I B k 3]
+        # index = tf.Print(index, [tf.shape(index)], message='index shape: ', summarize=100)
       else:
         self.base_encoder_transformed = tf.transpose(self.base_encoder_transformed,
-                                                     perm=[1, 2, 0])  # Now [B, intermediate_size, J]
-        top_indices = tf.tile(top_indices, [1, intermediate_size, 1])  # Now [B, intermediate_size, temp_k]
-        jj, kk, _ = tf.meshgrid(
-          tf.range(batch_size),
-          tf.range(intermediate_size),
-          tf.range(temp_k),
-          indexing='ij')
+                                                     perm=[1, 0, 2])  # Now [B, J, f]
+        top_indices = tf.squeeze(top_indices, axis=1)
+        jj, _ = tf.meshgrid(tf.range(batch_size), tf.range(temp_k), indexing='ij')
         # Stack complete index
-        index = tf.stack([jj, kk, top_indices], axis=-1)
+        index = tf.stack([jj, top_indices], axis=-1)
 
       # Get the same values again
-      self.base_encoder_transformed = tf.gather_nd(self.base_encoder_transformed, index) # Now [B, intermediate_size, temp_k]
+      self.base_encoder_transformed = tf.gather_nd(self.base_encoder_transformed, index) # Now [I, B, J=k, f]
 
       if in_loop is False:
         self.base_encoder_transformed = tf.transpose(self.base_encoder_transformed,
-                                                     perm=[0, 3, 1, 2])  # [I, J, B, intermediate_size]
+                                                     perm=[0, 2, 1, 3])  # [I, J, B, f]
       else:
         self.base_encoder_transformed = tf.transpose(self.base_encoder_transformed,
-                                                     perm=[2, 0, 1])  # [J, B, intermediate_size]
+                                                     perm=[1, 0, 2])  # [J, B, f]
 
     if debug:
       self.base_encoder_transformed = tf.Print(self.base_encoder_transformed, [tf.shape(self.base_encoder_transformed),
@@ -349,205 +340,3 @@ class HMMFactorization(_ConcatInputLayer):
     return data
 
 
-
-class SimpleHMMFactorization(_ConcatInputLayer):
-
-  layer_class = "simple_hmm_factorization"
-
-  def __init__(self, attention_weights, base_encoder_transformed, prev_state, prev_outputs, n_out, topk=5, **kwargs):
-
-    super(SimpleHMMFactorization, self).__init__(**kwargs)
-
-
-    self.attention_weights = attention_weights.output.get_placeholder_as_time_major()  # (I, J, bs, 1)
-    self.base_encoder_transformed = base_encoder_transformed.output.get_placeholder_as_time_major() # (J, bs, f)
-    self.prev_state = prev_state.output.get_placeholder_as_time_major() # (I, bs, f)
-    self.prev_outputs = prev_outputs.output.get_placeholder_as_time_major() # (I, bs, f)
-
-    attention_weights_shape = tf.shape(self.attention_weights)
-    time_i = attention_weights_shape[0]
-    batch_size = attention_weights_shape[2]
-    seq_len = attention_weights_shape[1]
-
-    # self.attention_weights = tf.Print(self.attention_weights, [tf.shape(self.attention_weights)],
-    #                                       message='Attention weight shape: ', summarize=100)
-    #
-    #
-    # self.base_encoder_transformed = tf.Print(self.base_encoder_transformed, [tf.shape(self.base_encoder_transformed)],
-    #                                       message='base_encoder_transformed shape: ', summarize=100)
-    #
-    # self.prev_state = tf.Print(self.prev_state, [tf.shape(self.prev_state)],
-    #                                       message='prev_state shape: ', summarize=100)
-    #
-    #
-    # self.prev_outputs = tf.Print(self.prev_outputs, [tf.shape(self.prev_outputs)],
-    #                                       message='prev_outputs shape: ', summarize=100)
-
-
-    temp_k = tf.minimum(topk, seq_len)
-    # temp_k = tf.Print(temp_k, [temp_k], message='temp_k: ', summarize=100)
-
-    # Permutate attention weights correctly to work for top_k
-    self.attention_weights = tf.transpose(self.attention_weights, perm=[0, 2, 3, 1])  # Now [I, bs, 1, J]
-
-    # self.attention_weights = tf.Print(self.attention_weights, [tf.shape(self.attention_weights)],
-    #                                        message='Attention weight shape: ', summarize=100)
-
-    top_alignments_v, top_alignments_i  = tf.nn.top_k(self.attention_weights, k=temp_k) # Now [I, bs, 1, K]
-
-    # top_alignments_i = tf.Print(top_alignments_i, [tf.shape(top_alignments_i)],
-    #                                        message='top_alignments shape: ', summarize=100)
-
-
-
-
-    encoder_shape=tf.shape(self.base_encoder_transformed) # (J, bs, f)
-
-
-    ################### Extend the batch_tensor from (bsxk,1) --> (I, bsxk, 1) #################### Size are wrong
-    #inter_bs_tensor = tf.tile(tf.expand_dims(tf.range(encoder_shape[1]),axis=1),[1,temp_k]) # (bs, K)
-    # batch_tensor=tf.reshape(tf.tile(tf.expand_dims(inter_bs_tensor,axis=0),[time_i, 1, 1]),[time_i, encoder_shape[1]*temp_k,1]) # (I, bs*k, 1)
-    # indices_tensor=tf.reshape(top_alignments_i,[time_i, batch_size*temp_k,1]) # (I, bs*k, 1)
-    #
-    # inter_bs_tensor = tf.tile(tf.expand_dims(tf.range(batch_size),axis=1),[1,temp_k]) # (bs, K)
-    # batch_tensor=tf.reshape(tf.tile(tf.expand_dims(inter_bs_tensor,axis=0),[time_i, 1, 1]),[time_i*batch_size*temp_k,1]) # (I*bs*k, 1)
-
-
-    # Make indices for the rest of axes
-    ii, jj, kk, _ = tf.meshgrid( tf.range(time_i), tf.range(batch_size), tf.range(1), tf.range(temp_k), indexing='ij')
-    # Stack complete index
-    indices_tensor = tf.stack([ii, jj, kk, top_alignments_i], axis=-1)  # (I, B, 1, k)
-
-
-
-
-
-    # batch_tensor=tf.reshape(tf.tile(tf.expand_dims(tf.range(batch_size),axis=1),[1,temp_k]),[batch_size*temp_k,1])
-    # indices_tensor=tf.reshape(top_alignments_i,[-1,1])
-
-
-    # batch_tensor = tf.Print(batch_tensor, [tf.shape(batch_tensor)],
-    #                                       message='batch_tensor shape: ', summarize=100)
-
-
-    # indices_tensor = tf.Print(indices_tensor, [tf.shape(indices_tensor)],
-    #                                       message='indices_tensor shape: ', summarize=100)
-
-
-    # Convert base_encoder_transformed, prev_state and prev_outputs to correct shape
-    self.base_encoder_transformed = tf.tile(tf.expand_dims(self.base_encoder_transformed, axis=0),
-                                              [time_i, 1, 1, 1])  # [I, J, B, intermediate_size]
-
-    self.base_encoder_transformed = tf.transpose(self.base_encoder_transformed, perm=[0, 2, 3, 1])  # Now [I, B, f, J]
-
-
-    #top_encoder_parts is the top 5 (or memory_time if memory_time < 5) most probable encoder states
-    self.top_encoder_parts=tf.gather_nd(self.base_encoder_transformed, indices_tensor)
-
-    # self.top_encoder_parts = tf.Print(self.top_encoder_parts, [tf.shape(self.top_encoder_parts)],
-    #                                       message='+++++top_encoder_parts shape: ', summarize=100)
-
-
-
-    # # Convert base_encoder_transformed, prev_state and prev_outputs to correct shape
-    # self.base_encoder_transformed = tf.tile(tf.expand_dims(self.top_encoder_parts, axis=0),
-    #                                           [time_i, 1, 1, 1])  # [I, J, B, intermediate_size]
-
-    self.prev_state = tf.tile(tf.expand_dims(self.prev_state, axis=1),
-                                [1, temp_k, 1, 1])  # [I, J, B, intermediate_size]
-
-    self.prev_outputs = tf.tile(tf.expand_dims(self.prev_outputs, axis=1),
-                                  [1, temp_k, 1, 1])  # [I, J, B, intermediate_size]
-
-    #top_encoder_parts is the top 5 (or memory_time if memory_time < 5) most probable encoder states
-    # self.top_encoder_parts=tf.gather_nd(self.base_encoder_transformed,tf.reshape(tf.concat([batch_tensor,indices_tensor],1),[time_i, temp_k,encoder_shape[1],-1])) #(I, K, bs, f)
-
-    # Permutate attention weights correctly
-    # self.attention_weights = tf.transpose(self.attention_weights, perm=[0, 2, 3, 1])  # Now  # (I, bs, 1, J)
-
-    # self.attention_weights = tf.Print(self.attention_weights, [tf.shape(self.attention_weights)],
-    #                                       message='+++++Attention weight shape: ', summarize=100)
-    #
-    #
-    #
-    #
-    # self.base_encoder_transformed = tf.Print(self.base_encoder_transformed, [tf.shape(self.base_encoder_transformed)],
-    #                                       message='++++base_encoder_transformed shape: ', summarize=100)
-    #
-    # self.prev_state = tf.Print(self.prev_state, [tf.shape(self.prev_state)],
-    #                                       message='++++prev_state shape: ', summarize=100)
-    #
-    #
-    # self.prev_outputs = tf.Print(self.prev_outputs, [tf.shape(self.prev_outputs)],
-    #                                       message='++++prev_outputs shape: ', summarize=100)
-
-
-    self.top_encoder_parts = tf.transpose(self.top_encoder_parts, perm=[0, 3, 1, 2])  # [I, B, f, K]
-
-
-
-    # Get logits, now [I, K, B, vocab_size]/[J, B, vocab_size]   # [I, J, B, f]
-    lexicon_logits = tf.layers.dense(self.top_encoder_parts + self.prev_outputs + self.prev_state,
-                                     units=n_out,
-                                     activation=None,
-                                     use_bias=False)
-
-    #
-    # lexicon_logits = tf.Print(lexicon_logits, [tf.shape(lexicon_logits)],
-    #                                       message='++++lexicon_logits shape: ', summarize=100)
-
-    lexicon_logits = tf.transpose(lexicon_logits, perm=[0, 2, 1, 3])  # Now [I, B, J, |V|]
-
-    # Now [I, B, J, vocab_size]/[B, J, vocab_size], Perform softmax on last layer
-    lexicon_model = tf.nn.softmax(lexicon_logits)
-
-    # in_loop=True   Multiply for final logits, [B, 1, J] x [B, J, vocab_size] ----> [B, 1, vocab]
-    # in_loop=False: Multiply for final logits, [I, B, 1, J] x [I, B, J, vocab_size] ----> [I, B, 1, vocab]
-    final_output = tf.matmul(top_alignments_v, lexicon_model)
-    # Squeeze [I, B, vocab]
-    final_output = tf.squeeze(final_output, axis=2)
-
-
-    # Set shaping info
-    output_size = self.input_data.size_placeholder[0]
-    # final_output = tf.Print(final_output, [self.input_data.size_placeholder[0]],
-    #                               message='Prev output size placeholder: ',
-    #                               summarize=100)
-
-    self.output.placeholder = final_output
-    self.output.size_placeholder = {0: output_size}
-    self.output.time_dim_axis = 0
-    self.output.batch_dim_axis = 1
-
-
-    # print('BEAAAAAAAAAAAAAAAAAAM SIZE:    ' + str(prev_state.output.beam_size))
-    self.output.beam_size = prev_state.output.beam_size
-
-    # Add all trainable params
-    with self.var_creation_scope() as scope:
-      self._add_all_trainable_params(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=scope.name))
-
-  def _add_all_trainable_params(self, tf_vars):
-    for var in tf_vars:
-      self.add_param(param=var, trainable=True, saveable=True)
-
-  @classmethod
-  def transform_config_dict(cls, d, network, get_layer):
-    d.setdefault("from", [d["attention_weights"]])
-    super(SimpleHMMFactorization, cls).transform_config_dict(d, network=network, get_layer=get_layer)
-    d["attention_weights"] = get_layer(d["attention_weights"])
-    d["base_encoder_transformed"] = get_layer(d["base_encoder_transformed"])
-    d["prev_state"] = get_layer(d["prev_state"])
-    d["prev_outputs"] = get_layer(d["prev_outputs"])
-
-  @classmethod
-  def get_out_data_from_opts(cls, attention_weights, prev_state, n_out, out_type=None, sources=(), **kwargs):
-
-    data = attention_weights.output
-    data = data.copy_as_time_major()  # type: Data
-    data.shape = (None, n_out)
-    data.time_dim_axis = 0
-    data.batch_dim_axis = 1
-    data.dim = n_out
-
-    return data

@@ -8,7 +8,7 @@ class HMMFactorization(_ConcatInputLayer):
   layer_class = "hmm_factorization"
 
   def __init__(self, attention_weights, base_encoder_transformed, prev_state, prev_outputs, n_out, debug=False,
-               threshold=None, transpose_and_average_att_weights=False, top_k=None, **kwargs):
+               threshold=None, transpose_and_average_att_weights=False, top_k=None, non_probabilistic=False, **kwargs):
     """
     HMM factorization as described in Parnia Bahar's paper.
     Out of rnn loop usage.
@@ -43,9 +43,10 @@ class HMMFactorization(_ConcatInputLayer):
       self.prev_outputs = prev_outputs.output.get_placeholder_as_time_major() # [I, B, f]
     else:
       self.attention_weights = attention_weights.output.get_placeholder_as_batch_major()
-      self.base_encoder_transformed = base_encoder_transformed.output.get_placeholder_as_batch_major()  # [B, J f]
+      self.base_encoder_transformed = base_encoder_transformed.output.get_placeholder_as_batch_major()  # [B, J, f]
       self.prev_state = prev_state.output.get_placeholder_as_batch_major()  # [B, f]
       self.prev_outputs = prev_outputs.output.get_placeholder_as_batch_major()  # [B, f]
+
 
 
     if debug:
@@ -85,14 +86,14 @@ class HMMFactorization(_ConcatInputLayer):
 
 
     # Get data
-    attention_weights_shape = tf.shape(self.attention_weights)
+    #attention_weights_shape = tf.shape(self.attention_weights)
     if in_loop is False:
-      # attention_weights_shape = tf.shape(self.attention_weights)
+      attention_weights_shape = tf.shape(self.attention_weights) # [I, J, B, 1]
       time_i = attention_weights_shape[0]
       batch_size = attention_weights_shape[2]
       time_j = attention_weights_shape[1]
     else:
-      # attention_weights_shape = tf.shape(self.attention_weights)
+      attention_weights_shape = tf.shape(self.attention_weights) # [J, B, 1]
       batch_size = attention_weights_shape[1]
       time_j = attention_weights_shape[0]
 
@@ -136,16 +137,16 @@ class HMMFactorization(_ConcatInputLayer):
       self.base_encoder_transformed = tf.transpose(self.base_encoder_transformed,
                                                    perm=[1, 0, 2])  # [J, B, f]
       if top_k is not None:
-        self.prev_state = tf.tile(tf.expand_dims(self.prev_state, axis=1),
-                                [temp_k, 1, 1])  # [I, J=top_k, B, f]
+        self.prev_state = tf.tile(tf.expand_dims(self.prev_state, axis=0),
+                                [temp_k, 1, 1])  # [J=top_k, B, f]
 
-        self.prev_outputs = tf.tile(tf.expand_dims(self.prev_outputs, axis=1),
-                                  [temp_k, 1, 1])  # [I, J=top_k, B, f]
+        self.prev_outputs = tf.tile(tf.expand_dims(self.prev_outputs, axis=0),
+                                  [temp_k, 1, 1])  # [J=top_k, B, f]
       else:
-        self.prev_state = tf.tile(tf.expand_dims(self.prev_state, axis=1),
-                                    [time_j, 1, 1])  # [I, J, B, f]
-        self.prev_outputs = tf.tile(tf.expand_dims(self.prev_outputs, axis=1),
-                                  [time_j, 1, 1])  # [I, J, B, f]
+        self.prev_state = tf.tile(tf.expand_dims(self.prev_state, axis=0),
+                                    [time_j, 1, 1])  # [J, B, f]
+        self.prev_outputs = tf.tile(tf.expand_dims(self.prev_outputs, axis=0),
+                                  [time_j, 1, 1])  # [J, B, f]
 
     # Fix self.base_encoder_transformed if in top_k
     if top_k is not None:
@@ -177,12 +178,14 @@ class HMMFactorization(_ConcatInputLayer):
                                                      perm=[1, 0, 2])  # [J, B, f]
 
     if debug:
-      self.base_encoder_transformed = tf.Print(self.base_encoder_transformed, [tf.shape(self.base_encoder_transformed),
-                                                                               tf.shape(self.prev_state),
-                                                                               tf.shape(self.prev_outputs)],
-                                               message='Shapes of base encoder, prev_state '
-                                                       'and prev_outputs post shaping: ',
-                                               summarize=100)
+      self.base_encoder_transformed = tf.Print(self.base_encoder_transformed,
+                                                 [tf.shape(self.base_encoder_transformed),
+                                                  tf.shape(self.prev_state),
+                                                  tf.shape(self.prev_outputs)],
+                                                 message='Shapes of base encoder, prev_state '
+                                                         'and prev_outputs post shaping: ',
+                                                 summarize=100)
+
 
     # Permutate attention weights correctly
     if in_loop is False:
@@ -244,8 +247,12 @@ class HMMFactorization(_ConcatInputLayer):
         lexicon_logits = tf.Print(lexicon_logits, [lexicon_logits],
                                   message='lexicon_model post mask: ', summarize=amount_to_debug)
 
-    # Now [I, B, J, vocab_size]/[B, J, vocab_size], Perform softmax on last layer
-    lexicon_model = tf.nn.softmax(lexicon_logits)
+
+    if non_probabilistic:
+      # Now [I, B, J, vocab_size]/[B, J, vocab_size], Perform softmax on last layer
+      lexicon_model = tf.nn.sigmoid(lexicon_logits + 1e-12)
+    else:
+      lexicon_model = tf.nn.softmax(lexicon_logits)
 
     if debug:
       lexicon_model = tf.Print(lexicon_model, [tf.shape(lexicon_model)], message='lexicon_model shape: ', summarize=100)
@@ -338,5 +345,4 @@ class HMMFactorization(_ConcatInputLayer):
       data.time_dim_axis = None
       data.dim = n_out
     return data
-
 

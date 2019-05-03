@@ -7,7 +7,7 @@ import re
 import json
 import pickle
 
-
+# ATTENTION! (TODO: remove it)
 # default target vocab: /work/smt3/bahar/expriments/wmt/2018/de-en/data/julian-data/nn-vocabs/vocab.de-en.en.pkl
 # default source vocab: /work/smt3/bahar/expriments/wmt/2018/de-en/data/julian-data/nn-vocabs/vocab.de-en.de.pkl
 
@@ -72,12 +72,7 @@ if __name__ == '__main__':
     parser.add_argument('attention', metavar='attention', type=str, help='path to attention file')
     parser.add_argument('t', metavar='t', type=int, help='time step to visualize')
 
-    # '/work/smt3/bahar/expriments/wmt/2018/de-en/data/julian-data/nn-vocabs/vocab.de-en.en.pkl'
-    #d_t = "/home/nikita/NMT/visualizations/attention_weights/vocab.de-en.en.pkl"
     d_t = "/u/bahar/workspace/wmt/2018/de-en-6M--2019-01-16/de-en-hmm--2018-01-16/dataset/target.vocab.pkl"
-
-    # /work/smt3/bahar/expriments/wmt/2018/de-en/data/julian-data/nn-vocabs/vocab.de-en.de.pkl
-    #d_s = "/home/nikita/NMT/visualizations/attention_weights/vocab.de-en.de.pkl"
     d_s = "/u/bahar/workspace/wmt/2018/de-en-6M--2019-01-16/de-en-hmm--2018-01-16/dataset/source.vocab.pkl"
 
     parser.add_argument('--target_vocab_file', metavar='target_vocab_file', type=str,

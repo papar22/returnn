@@ -141,7 +141,7 @@ class HMMFactorization(_ConcatInputLayer):
       post_attention = tf.layers.dense(post_attention, units=base_encoder_transformed.output.shape[-1],
                                        activation=tf.nn.tanh, use_bias=False)  # TODO: check if this is how we want it
       post_attention = tf.layers.dense(post_attention, units=1, activation=None, use_bias=False)  # [(I,) J', B, 1]
-      post_attention = tf.nn.softmax(post_attention, axis=1)  # [(I,) J', B, 1]
+      post_attention = tf.nn.softmax(post_attention, axis=-3)  # [(I,) J', B, 1]
 
       # topk on posterior attention
       if in_loop is False:

@@ -36,9 +36,10 @@ import rnn
 from TFEngine import Runner
 from Dataset import init_dataset
 from Util import NumbersDict, Stats, deep_update_dict_values
+np.set_printoptions(suppress=True)
 
 
-def inject_retrieval_code(net_dict, rec_layer_name, layers, dropout):
+def inject_retrieval_code(net_dict, rec_layer_name, layers, dropout, args):
   """
   Injects some retrieval code into the config
 
@@ -63,6 +64,11 @@ def inject_retrieval_code(net_dict, rec_layer_name, layers, dropout):
   if dropout is not None:
     deep_update_dict_values(net_dict, "dropout", dropout)
     deep_update_dict_values(net_dict, "rec_weight_dropout", dropout)
+
+  if args.hmm_fac_fo:
+    # hmm fac layer
+    new_layers_descr[rec_layer_name]['unit']["output_prob"]["attention_location"] = args.dump_dir
+
   return new_layers_descr
 
 
@@ -71,7 +77,8 @@ def init_returnn(config_fn, args):
   :param str config_fn:
   :param args: arg_parse object
   """
-  rnn.init_better_exchook()
+  #rnn.init_better_exchook()
+  rnn.initBetterExchook()
   config_updates = {
     "log": [],
     "task": "eval",
@@ -87,8 +94,16 @@ def init_returnn(config_fn, args):
       "max_seq_length": 0,
       })
 
+  if args.tf_log_dir:
+    config_updates.update({
+      "tf_log_dir": args.tf_log_dir,
+    })
+
+  #rnn.init(
+  #  config_filename=config_fn,
+  #  config_updates=config_updates, extra_greeting="RETURNN get-attention-weights starting up.")
   rnn.init(
-    config_filename=config_fn,
+    configFilename=config_fn,
     config_updates=config_updates, extra_greeting="RETURNN get-attention-weights starting up.")
   global config
   config = rnn.config
@@ -100,10 +115,14 @@ def init_net(args, layers):
   :param list[str] layers:
   """
   def net_dict_post_proc(net_dict):
-    return inject_retrieval_code(net_dict, rec_layer_name=args.rec_layer, layers=layers, dropout=args.dropout)
+    return inject_retrieval_code(net_dict, rec_layer_name=args.rec_layer, layers=layers, dropout=args.dropout,
+                                 args=args)
 
-  rnn.engine.use_dynamic_train_flag = True  # will be set via Runner. maybe enabled if we want dropout
+  #rnn.engine.use_dynamic_train_flag = True  # will be set via Runner. maybe enabled if we want dropout
+  rnn.engine.use_dynamic_train_flag = not args.do_search
   rnn.engine.init_network_from_config(config=config, net_dict_post_proc=net_dict_post_proc)
+  rnn.engine.use_search_flag = args.do_search
+  # use_search_flag
 
 
 def main(argv):
@@ -129,8 +148,10 @@ def main(argv):
   argparser.add_argument("--dropout", default=None, type=float, help="if set, overwrites all dropout values")
   argparser.add_argument("--train_flag", action="store_true")
   argparser.add_argument("--reset_partition_epoch", type=int, default=1)
-  argparser.add_argument("--reset_seq_ordering", default="sorted_reverse")
+  argparser.add_argument("--reset_seq_ordering", default="default")
   argparser.add_argument("--reset_epoch_wise_filter", default=None)
+  argparser.add_argument('--hmm_fac_fo', default=False, action='store_true')
+  argparser.add_argument('--tf_log_dir', help="for npy or png", default=None)
   args = argparser.parse_args(argv[1:])
 
   layers = args.layers
@@ -211,6 +232,10 @@ def main(argv):
   for l in layers:
     sub_layer = rnn.engine.network.get_layer("%s/%s" % (args.rec_layer, l))
     extra_fetches["rec_%s" % l] = sub_layer.output.get_placeholder_as_batch_major()
+    if args.do_search:
+      o_layer = rnn.engine.network.get_layer("output")
+      extra_fetches["beam_scores_" + l] = o_layer.get_search_choices().beam_scores
+
   dataset.init_seq_order(epoch=1, seq_list=args.seq_list or None)  # use always epoch 1, such that we have same seqs
   dataset_batch = dataset.generate_batches(
     recurrent_net=network.recurrent,
@@ -236,31 +261,66 @@ def main(argv):
     :param kwargs: contains "rec_%s" % l for l in layers, the sub layers (e.g att weights) we are interested in
     """
     n_batch = len(seq_idx)
+
     for i in range(n_batch):
       for l in layers:
         att_weights = kwargs["rec_%s" % l][i]
         stats[l].collect(att_weights.flatten())
     if args.output_format == "npy":
       data = {}
-      for i in range(n_batch):
-        data[i] = {
-          'tag': seq_tag[i],
-          'data': target_data[i],
-          'classes': target_classes[i],
-          'output': output[i],
-          'output_len': output_len[i],
-          'encoder_len': encoder_len[i],
-        }
-        for l in [("rec_%s" % l) for l in layers]:
-          assert l in kwargs
-          out = kwargs[l][i]
-          # TODO: modified for multi-head attention
-          out = np.transpose(out, axes=(1, 2, 0))  # (I, J, H)
-          assert out.ndim >= 2
-          assert out.shape[0] >= output_len[i] and out.shape[1] >= encoder_len[i]
-          data[i][l] = out[:output_len[i], :encoder_len[i]]
-        fname = args.dump_dir + '/%s_ep%03d_data_%i_%i.npy' % (model_name, rnn.engine.epoch, seq_idx[0], seq_idx[-1])
-        np.save(fname, data)
+      if args.do_search:
+        for i in range(n_batch):
+          # The first beam contains the score with the highest beam
+          i_beam = args.beam_size * i
+          data[i] = {
+            'tag': seq_tag[i],
+            'data': target_data[i],
+            'classes': target_classes[i],
+            'output': output[i_beam],
+            'output_len': output_len[i_beam],
+            'encoder_len': encoder_len[i],
+          }
+
+          if args.hmm_fac_fo is False:
+            for l, l_raw in zip([("rec_%s" % l) for l in layers], layers):
+              assert l in kwargs
+              out = kwargs[l][i_beam]
+              # Do search for multihead
+              # out is [I, H, 1, J] is new version
+              # out is [I, J, H, 1] for old version
+              #out = np.transpose(out, axes=(0, 3, 1, 2))  # [I, J, H, 1] new version
+              out = np.squeeze(out, axis=-1)
+              data[i][l] = out[:output_len[i_beam], :encoder_len[i]]
+          fname = args.dump_dir + '/%s_ep%03d_data_%i_%i.npy' % (model_name, rnn.engine.epoch, seq_idx[0], seq_idx[-1])
+          np.save(fname, data)
+      else:
+        for i in range(n_batch):
+          data[i] = {
+            'tag': seq_tag[i],
+            'data': target_data[i],
+            'classes': target_classes[i],
+            'output': output[i],
+            'output_len': output_len[i],
+            'encoder_len': encoder_len[i],
+          }
+          if args.hmm_fac_fo is False:
+            for l in [("rec_%s" % l) for l in layers]:
+              assert l in kwargs
+              out = kwargs[l][i]  # []
+              # multi-head attention
+              if len(out.shape) == 3 and out.shape[-1] > 1:
+                # Multihead attention
+                #out = np.transpose(out, axes=(1, 2, 0))  # (I, J, H) new version
+                out = np.transpose(out, axes=(2, 0, 1))  # [I, J, H] old version
+              else:
+                # RNN
+                out = np.squeeze(out, axis=-1)
+              print(out[:output_len[i], :encoder_len[i], 0])
+              assert out.ndim >= 2
+              assert out.shape[0] >= output_len[i] and out.shape[1] >= encoder_len[i]
+              data[i][l] = out[:output_len[i], :encoder_len[i]]
+          fname = args.dump_dir + '/%s_ep%03d_data_%i_%i.npy' % (model_name, rnn.engine.epoch, seq_idx[0], seq_idx[-1])
+          np.save(fname, data)
     elif args.output_format == "png":
       for i in range(n_batch):
         for l in layers:
@@ -301,7 +361,8 @@ def main(argv):
   runner = Runner(engine=rnn.engine, dataset=dataset, batches=dataset_batch,
                   train=False, train_flag=bool(args.dropout) or args.train_flag,
                   extra_fetches=extra_fetches,
-                  extra_fetches_callback=fetch_callback)
+                  extra_fetches_callback=fetch_callback,
+                  eval=False)
   runner.run(report_prefix="att-weights epoch %i" % rnn.engine.epoch)
   for l in layers:
     stats[l].dump(stream_prefix="Layer %r " % l)
